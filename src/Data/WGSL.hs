@@ -15,6 +15,9 @@ module Data.WGSL
     Attribute (..),
     vertex,
     fragment,
+    Ty (..),
+    Input (..),
+    arg,
     Shader (..),
     fn,
     exportFn,
@@ -149,12 +152,57 @@ fragment = Attribute "fragment"
 attrToString :: Attribute -> String
 attrToString (Attribute value) = "@" ++ value
 
+data Ty a where
+  IntTy :: Ty Int
+  FloatTy :: Ty Float
+  BoolTy :: Ty Bool
+
+tyToString :: Ty a -> String
+tyToString IntTy = "i32"
+
+data Input a where
+  PureInput :: a -> Input a
+  MapInput :: (a -> b) -> Input a -> Input b
+  AppInput :: Input (a -> b) -> Input a -> Input b
+  BindInput :: Input a -> (a -> Input b) -> Input b
+  ArgInput :: Ty a -> Input (WGSL (Expr a))
+
+instance Functor Input where
+  fmap = MapInput
+
+instance Applicative Input where
+  pure = PureInput
+  (<*>) = AppInput
+
+instance Monad Input where
+  (>>=) = BindInput
+
+arg :: Ty a -> Input (WGSL (Expr a))
+arg = ArgInput
+
+inputToString :: Int -> Input a -> (a, Int, String)
+inputToString i (PureInput a) = (a, i, "")
+inputToString i (MapInput f a) = let (a', i', s) = inputToString i a in (f a', i', s)
+inputToString i (AppInput f a) =
+  let (f', i1, s) = inputToString i f
+      (a', i2, s') = inputToString i1 a
+   in (f' a', i2, s ++ s')
+inputToString i (BindInput a f) =
+  let (a', i1, s) = inputToString i a
+      (b, i2, s') = inputToString i1 (f a')
+   in (b, i2, s ++ s')
+inputToString i (ArgInput ty) =
+  ( pure $ VarExpr ("v" ++ show i),
+    i + 1,
+    "v" ++ show i ++ ": " ++ tyToString ty
+  )
+
 data Shader a where
   PureShader :: a -> Shader a
   MapShader :: (a -> b) -> Shader a -> Shader b
   AppShader :: Shader (a -> b) -> Shader a -> Shader b
   BindShader :: Shader a -> (a -> Shader b) -> Shader b
-  FnShader :: [Attribute] -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
+  FnShader :: [Attribute] -> Input i -> (i -> Stmt (WGSL (Expr a))) -> Shader (Expr a)
   ExportFnShader :: String -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
 
 instance Functor Shader where
@@ -167,7 +215,7 @@ instance Applicative Shader where
 instance Monad Shader where
   (>>=) = BindShader
 
-fn :: [Attribute] -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
+fn :: [Attribute] -> Input i -> (i -> Stmt (WGSL (Expr a))) -> Shader (Expr a)
 fn = FnShader
 
 exportFn :: String -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
@@ -187,14 +235,18 @@ toString' i (BindShader a f) =
   let (a', i1, s1) = toString' i a
       (b, i2, s2) = toString' i1 (f a')
    in (b, i2, s1 ++ s2)
-toString' i (FnShader attrs stmt) =
-  let (a, i', s) = stmtToString' 4 (i + 1) stmt
+toString' i (FnShader attrs input f) =
+  let (input', i', inputS) = inputToString i input
+      stmt = f input'
+      (a, i'', s) = stmtToString' 4 (i' + 1) stmt
    in ( buildWGSL a,
-        i',
+        i'',
         (concat $ map attrToString attrs)
           ++ "\nfn v"
           ++ show i
-          ++ "() {\n"
+          ++ "("
+          ++ inputS
+          ++ ") {\n"
           ++ s
           ++ "}\n"
       )
