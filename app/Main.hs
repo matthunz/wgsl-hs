@@ -4,11 +4,16 @@ module Main where
 
 import Data.WGSL
 
-s :: Stmt (WGSL (Expr Int))
-s = do
+f :: Shader (Expr Int)
+f = fn $ do
   x <- var (2 + 2)
   y <- var (x * 3)
   return (x + y)
 
+s :: Shader ()
+s = do
+  _ <- f
+  return ()
+
 main :: IO ()
-main = putStrLn (stmtToString s)
+main = putStrLn (toString s)

@@ -12,6 +12,10 @@ module Data.WGSL
     Stmt (..),
     var,
     stmtToString,
+    Shader (..),
+    fn,
+    exportFn,
+    toString,
   )
 where
 
@@ -111,22 +115,67 @@ var :: WGSL (Expr a) -> Stmt (WGSL (Expr a))
 var = VarStmt
 
 stmtToString :: Stmt a -> String
-stmtToString stmt = let (_, _, s) = stmtToString' 0 stmt in s
+stmtToString stmt = let (_, _, s) = stmtToString' 0 0 stmt in s
 
-stmtToString' :: Int -> Stmt a -> (a, Int, String)
-stmtToString' i (PureStmt a) = (a, i, "")
-stmtToString' i (MapStmt f a) = let (a', i', s) = stmtToString' i a in (f a', i', s)
-stmtToString' i (AppStmt f a) =
-  let (f', i1, s1) = stmtToString' i f
-      (a', i2, s2) = stmtToString' i1 a
+stmtToString' :: Int -> Int -> Stmt a -> (a, Int, String)
+stmtToString' _ i (PureStmt a) = (a, i, "")
+stmtToString' indent i (MapStmt f a) = let (a', i', s) = stmtToString' indent i a in (f a', i', s)
+stmtToString' indent i (AppStmt f a) =
+  let (f', i1, s1) = stmtToString' indent i f
+      (a', i2, s2) = stmtToString' indent i1 a
    in (f' a', i2, s1 ++ s2)
-stmtToString' i (BindStmt a f) =
-  let (a', i1, s1) = stmtToString' i a
-      (b, i2, s2) = stmtToString' i1 (f a')
+stmtToString' indent i (BindStmt a f) =
+  let (a', i1, s1) = stmtToString' indent i a
+      (b, i2, s2) = stmtToString' indent i1 (f a')
    in (b, i2, s1 ++ s2)
-stmtToString' i (ExprStmt a) = (buildWGSL a, i, exprToString (buildWGSL a))
-stmtToString' i (VarStmt a) =
+stmtToString' indent i (ExprStmt a) = (buildWGSL a, i, replicate indent ' ' ++ exprToString (buildWGSL a))
+stmtToString' indent i (VarStmt a) =
   ( pure (VarExpr ("v" ++ show i)),
     i + 1,
-    "let v" ++ show i ++ " = " ++ exprToString (buildWGSL a) ++ ";\n"
+    replicate indent ' ' ++ "let v" ++ show i ++ " = " ++ exprToString (buildWGSL a) ++ ";\n"
   )
+
+data Shader a where
+  PureShader :: a -> Shader a
+  MapShader :: (a -> b) -> Shader a -> Shader b
+  AppShader :: Shader (a -> b) -> Shader a -> Shader b
+  BindShader :: Shader a -> (a -> Shader b) -> Shader b
+  FnShader :: Stmt (WGSL (Expr a)) -> Shader (Expr a)
+  ExportFnShader :: String -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
+
+instance Functor Shader where
+  fmap = MapShader
+
+instance Applicative Shader where
+  pure = PureShader
+  (<*>) = AppShader
+
+instance Monad Shader where
+  (>>=) = BindShader
+
+fn :: Stmt (WGSL (Expr a)) -> Shader (Expr a)
+fn = FnShader
+
+exportFn :: String -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
+exportFn = ExportFnShader
+
+toString :: Shader a -> String
+toString shader = let (_, _, s) = toString' 0 shader in s
+
+toString' :: Int -> Shader a -> (a, Int, String)
+toString' i (PureShader a) = (a, i, "")
+toString' i (MapShader f a) = let (a', i', s) = toString' i a in (f a', i', s)
+toString' i (AppShader f a) =
+  let (f', i1, s1) = toString' i f
+      (a', i2, s2) = toString' i1 a
+   in (f' a', i2, s1 ++ s2)
+toString' i (BindShader a f) =
+  let (a', i1, s1) = toString' i a
+      (b, i2, s2) = toString' i1 (f a')
+   in (b, i2, s1 ++ s2)
+toString' i (FnShader stmt) =
+  let (a, i', s) = stmtToString' 4 (i + 1) stmt
+   in (buildWGSL a, i', "fn v" ++ show i ++ " {\n" ++ s ++ "}\n")
+toString' i (ExportFnShader name stmt) =
+  let (a, i', s) = stmtToString' 4 i stmt
+   in (buildWGSL a, i', "fn " ++ name ++ " {\n" ++ s ++ "}\n")
