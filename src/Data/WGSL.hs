@@ -1,5 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Data.WGSL
   ( Lit (..),
@@ -16,6 +19,10 @@ module Data.WGSL
     vertex,
     fragment,
     Ty (..),
+    WGSLType (..),
+    InputAttribute (..),
+    location,
+    inputAttrToString,
     Input (..),
     arg,
     Shader (..),
@@ -24,6 +31,8 @@ module Data.WGSL
     toString,
   )
 where
+
+import Data.List (intercalate)
 
 data Lit a where
   IntLit :: Int -> Lit Int
@@ -159,13 +168,23 @@ data Ty a where
 
 tyToString :: Ty a -> String
 tyToString IntTy = "i32"
+tyToString FloatTy = "f32"
+tyToString BoolTy = "bool"
+
+data InputAttribute = Location Int
+
+location :: Int -> InputAttribute
+location = Location
+
+inputAttrToString :: InputAttribute -> String
+inputAttrToString (Location value) = "@location(" ++ show value ++ ")"
 
 data Input a where
   PureInput :: a -> Input a
   MapInput :: (a -> b) -> Input a -> Input b
   AppInput :: Input (a -> b) -> Input a -> Input b
   BindInput :: Input a -> (a -> Input b) -> Input b
-  ArgInput :: Ty a -> Input (WGSL (Expr a))
+  ArgInput :: [InputAttribute] -> Ty a -> Input (WGSL (Expr a))
 
 instance Functor Input where
   fmap = MapInput
@@ -177,8 +196,20 @@ instance Applicative Input where
 instance Monad Input where
   (>>=) = BindInput
 
-arg :: Ty a -> Input (WGSL (Expr a))
-arg = ArgInput
+class WGSLType a where
+  wgslTy :: Ty a
+
+instance WGSLType Int where
+  wgslTy = IntTy
+
+instance WGSLType Float where
+  wgslTy = FloatTy
+
+instance WGSLType Bool where
+  wgslTy = BoolTy
+
+arg :: forall a. (WGSLType a) => [InputAttribute] -> Input (WGSL (Expr a))
+arg attrs = ArgInput attrs (wgslTy @a)
 
 inputToString :: Int -> Input a -> (a, Int, String)
 inputToString i (PureInput a) = (a, i, "")
@@ -191,10 +222,10 @@ inputToString i (BindInput a f) =
   let (a', i1, s) = inputToString i a
       (b, i2, s') = inputToString i1 (f a')
    in (b, i2, s ++ s')
-inputToString i (ArgInput ty) =
+inputToString i (ArgInput attrs ty) =
   ( pure $ VarExpr ("v" ++ show i),
     i + 1,
-    "v" ++ show i ++ ": " ++ tyToString ty
+    intercalate " " (map inputAttrToString attrs) ++ " v" ++ show i ++ ": " ++ tyToString ty
   )
 
 data Shader a where
@@ -239,15 +270,17 @@ toString' i (FnShader attrs input f) =
   let (input', i', inputS) = inputToString i input
       stmt = f input'
       (a, i'', s) = stmtToString' 4 (i' + 1) stmt
-   in ( buildWGSL a,
+      a' = buildWGSL a
+      s' = s ++ replicate 4 ' ' ++ exprToString a' ++ "\n"
+   in ( a',
         i'',
-        (concat $ map attrToString attrs)
+        (intercalate "," $ map attrToString attrs)
           ++ "\nfn v"
           ++ show i
           ++ "("
           ++ inputS
           ++ ") {\n"
-          ++ s
+          ++ s'
           ++ "}\n"
       )
 toString' i (ExportFnShader name stmt) =

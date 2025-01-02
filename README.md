@@ -1,3 +1,6 @@
+# WGSL-hs
+
+```hs
 module Main where
 
 import Data.WGSL
@@ -32,3 +35,4 @@ shader = do
 
 main :: IO ()
 main = putStrLn (toString shader)
+```
