@@ -12,6 +12,9 @@ module Data.WGSL
     Stmt (..),
     var,
     stmtToString,
+    Attribute (..),
+    vertex,
+    fragment,
     Shader (..),
     fn,
     exportFn,
@@ -135,12 +138,23 @@ stmtToString' indent i (VarStmt a) =
     replicate indent ' ' ++ "let v" ++ show i ++ " = " ++ exprToString (buildWGSL a) ++ ";\n"
   )
 
+newtype Attribute = Attribute String
+
+vertex :: Attribute
+vertex = Attribute "vertex"
+
+fragment :: Attribute
+fragment = Attribute "fragment"
+
+attrToString :: Attribute -> String
+attrToString (Attribute value) = "@" ++ value
+
 data Shader a where
   PureShader :: a -> Shader a
   MapShader :: (a -> b) -> Shader a -> Shader b
   AppShader :: Shader (a -> b) -> Shader a -> Shader b
   BindShader :: Shader a -> (a -> Shader b) -> Shader b
-  FnShader :: Stmt (WGSL (Expr a)) -> Shader (Expr a)
+  FnShader :: [Attribute] -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
   ExportFnShader :: String -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
 
 instance Functor Shader where
@@ -153,7 +167,7 @@ instance Applicative Shader where
 instance Monad Shader where
   (>>=) = BindShader
 
-fn :: Stmt (WGSL (Expr a)) -> Shader (Expr a)
+fn :: [Attribute] -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
 fn = FnShader
 
 exportFn :: String -> Stmt (WGSL (Expr a)) -> Shader (Expr a)
@@ -173,9 +187,17 @@ toString' i (BindShader a f) =
   let (a', i1, s1) = toString' i a
       (b, i2, s2) = toString' i1 (f a')
    in (b, i2, s1 ++ s2)
-toString' i (FnShader stmt) =
+toString' i (FnShader attrs stmt) =
   let (a, i', s) = stmtToString' 4 (i + 1) stmt
-   in (buildWGSL a, i', "fn v" ++ show i ++ " {\n" ++ s ++ "}\n")
+   in ( buildWGSL a,
+        i',
+        (concat $ map attrToString attrs)
+          ++ "\nfn v"
+          ++ show i
+          ++ "() {\n"
+          ++ s
+          ++ "}\n"
+      )
 toString' i (ExportFnShader name stmt) =
   let (a, i', s) = stmtToString' 4 i stmt
-   in (buildWGSL a, i', "fn " ++ name ++ " {\n" ++ s ++ "}\n")
+   in (buildWGSL a, i', "fn " ++ name ++ "() {\n" ++ s ++ "}\n")
