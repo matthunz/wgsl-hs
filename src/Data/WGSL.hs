@@ -13,7 +13,8 @@ module Data.WGSL
     wgslExprToString,
     buildWGSL,
     Stmt (..),
-    var,
+    newConst,
+    newMut,
     stmtToString,
     Attribute (..),
     vertex,
@@ -41,7 +42,8 @@ data Lit a where
 
 data Expr a where
   LitExpr :: Lit a -> Expr a
-  VarExpr :: String -> Expr a
+  ConstExpr :: String -> Expr a
+  MutExpr :: String -> Expr a
   FnCall :: String -> [Expr a] -> Expr a
   NegExpr :: (Num a) => Expr a -> Expr a
   AddExpr :: (Num a) => Expr a -> Expr a -> Expr a
@@ -51,7 +53,8 @@ exprToString :: Expr a -> String
 exprToString (LitExpr (IntLit a)) = show a
 exprToString (LitExpr (FloatLit a)) = show a
 exprToString (LitExpr (BoolLit a)) = show a
-exprToString (VarExpr a) = a
+exprToString (ConstExpr a) = a
+exprToString (MutExpr a) = a
 exprToString (FnCall name args) = name ++ "(" ++ unwords (map exprToString args) ++ ")"
 exprToString (NegExpr a) = "-" ++ exprToString a
 exprToString (AddExpr a b) = exprToString a ++ " + " ++ exprToString b
@@ -114,7 +117,8 @@ data Stmt a where
   AppStmt :: Stmt (a -> b) -> Stmt a -> Stmt b
   BindStmt :: Stmt a -> (a -> Stmt b) -> Stmt b
   ExprStmt :: WGSL (Expr a) -> Stmt (Expr a)
-  VarStmt :: WGSL (Expr a) -> Stmt (WGSL (Expr a))
+  ConstStmt :: WGSL (Expr a) -> Stmt (WGSL (Expr a))
+  MutStmt :: WGSL (Expr a) -> Stmt (WGSL (Expr a))
 
 instance Functor Stmt where
   fmap = MapStmt
@@ -126,8 +130,11 @@ instance Applicative Stmt where
 instance Monad Stmt where
   (>>=) = BindStmt
 
-var :: WGSL (Expr a) -> Stmt (WGSL (Expr a))
-var = VarStmt
+newConst :: WGSL (Expr a) -> Stmt (WGSL (Expr a))
+newConst = ConstStmt
+
+newMut :: WGSL (Expr a) -> Stmt (WGSL (Expr a))
+newMut = MutStmt
 
 stmtToString :: Stmt a -> String
 stmtToString stmt = let (_, _, s) = stmtToString' 0 0 stmt in s
@@ -144,8 +151,13 @@ stmtToString' indent i (BindStmt a f) =
       (b, i2, s2) = stmtToString' indent i1 (f a')
    in (b, i2, s1 ++ s2)
 stmtToString' indent i (ExprStmt a) = (buildWGSL a, i, replicate indent ' ' ++ exprToString (buildWGSL a))
-stmtToString' indent i (VarStmt a) =
-  ( pure (VarExpr ("v" ++ show i)),
+stmtToString' indent i (ConstStmt a) =
+  ( pure (ConstExpr ("v" ++ show i)),
+    i + 1,
+    replicate indent ' ' ++ "const v" ++ show i ++ " = " ++ exprToString (buildWGSL a) ++ ";\n"
+  )
+stmtToString' indent i (MutStmt a) =
+  ( pure (MutExpr ("v" ++ show i)),
     i + 1,
     replicate indent ' ' ++ "let v" ++ show i ++ " = " ++ exprToString (buildWGSL a) ++ ";\n"
   )
@@ -223,7 +235,7 @@ inputToString i (BindInput a f) =
       (b, i2, s') = inputToString i1 (f a')
    in (b, i2, s ++ s')
 inputToString i (ArgInput attrs ty) =
-  ( pure $ VarExpr ("v" ++ show i),
+  ( pure $ MutExpr ("v" ++ show i),
     i + 1,
     intercalate " " (map inputAttrToString attrs) ++ " v" ++ show i ++ ": " ++ tyToString ty
   )
@@ -267,9 +279,9 @@ toString' i (BindShader a f) =
       (b, i2, s2) = toString' i1 (f a')
    in (b, i2, s1 ++ s2)
 toString' i (FnShader attrs input f) =
-  let (input', i', inputS) = inputToString i input
+  let (input', i', inputS) = inputToString (i + 1) input
       stmt = f input'
-      (a, i'', s) = stmtToString' 4 (i' + 1) stmt
+      (a, i'', s) = stmtToString' 4 i' stmt
       a' = buildWGSL a
       s' = s ++ replicate 4 ' ' ++ exprToString a' ++ "\n"
    in ( a',

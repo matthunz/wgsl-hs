@@ -8,8 +8,8 @@ vert =
     [vertex]
     (arg [location 0])
     ( \i -> do
-        x <- var (i + 2)
-        y <- var (x * 3)
+        x <- newConst (i + 2)
+        y <- newConst (x * 3)
         return (x + y)
     )
 
@@ -19,8 +19,8 @@ frag =
     [fragment]
     (pure ())
     ( \_ -> do
-        x <- var (2 + 2)
-        y <- var (x * 3)
+        x <- newConst (2 + 2)
+        y <- newConst (x * 3)
         return (x + y)
     )
 
