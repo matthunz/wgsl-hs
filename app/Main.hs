@@ -1,9 +1,14 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
 import Data.WGSL
 
-s :: WGSL (Expr Int)
-s = 1 + 1 * 2
+s :: Stmt (WGSL (Expr Int))
+s = do
+  x <- var (2 + 2)
+  y <- var (x * 3)
+  return (x + y)
 
 main :: IO ()
-main = putStrLn (toString s)
+main = putStrLn (stmtToString s)
